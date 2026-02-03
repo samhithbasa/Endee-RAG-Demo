@@ -1,0 +1,10 @@
+services:
+  endee:
+    image: endeeio/endee-server:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NDD_DATA_DIR=/app/data
+      - NDD_AUTH_TOKEN=secret
