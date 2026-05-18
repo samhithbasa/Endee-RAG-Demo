@@ -2,8 +2,8 @@ services:
   # 1. Endee Database (Private Service - Securely accessible only inside Render)
   - type: pserv
     name: endee-db
-    env: docker
-    dockerImage: endeeio/endee-server:latest
+    runtime: image
+    image: docker.io/endeeio/endee-server:latest
     plan: free
     envVars:
       - key: NDD_DATA_DIR
