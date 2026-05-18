@@ -4,94 +4,136 @@ from sentence_transformers import SentenceTransformer
 import json
 import os
 from dotenv import load_dotenv
-import openai
 import google.generativeai as genai
-from groq import Groq
+from utils import extract_text, chunk_text
 
 # Load environment variables
 load_dotenv()
 
 # Page Config
 st.set_page_config(
-    page_title="Endee RAG",
+    page_title="Endee RAG - Gemini Powered",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for Modern UI
+# Custom CSS for Premium Modern UI
 st.markdown("""
 <style>
+    /* Google Fonts Import */
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap');
+    
     /* Global Styles */
     .stApp {
-        background-color: #0e1117;
-        color: #e6e6e6;
+        background-color: #0d0f14;
+        color: #e6edf3;
+        font-family: 'Outfit', sans-serif;
     }
     
     /* Headings */
     h1, h2, h3 {
         color: #ffffff !important;
-        font-family: 'Inter', sans-serif;
+        font-family: 'Outfit', sans-serif;
+        font-weight: 600;
     }
     
-    /* Sidebar */
+    /* Sidebar styling */
     [data-testid="stSidebar"] {
-        background-color: #161b22;
-        border-right: 1px solid #30363d;
+        background-color: #121620;
+        border-right: 1px solid #1f2430;
     }
     
     /* Inputs */
     .stTextInput > div > div > input {
-        background-color: #0d1117;
+        background-color: #090c10;
         color: #ffffff;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-    }
-    
-    /* Chat Input */
-    .stChatInputContainer {
-        padding-bottom: 2rem;
-    }
-    
-    /* Result Cards */
-    .result-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
+        border: 1px solid #2f363d;
         border-radius: 10px;
+        font-family: 'Outfit', sans-serif;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: #4f46e5;
+        box-shadow: 0 0 0 1px #4f46e5;
+    }
+    
+    /* Buttons */
+    .stButton > button {
+        background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+        color: white !important;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+    }
+    
+    /* Premium Result Cards */
+    .result-card {
+        background-color: #151a26;
+        border: 1px solid #232a3b;
+        border-radius: 12px;
         padding: 1.5rem;
         margin-bottom: 1rem;
-        transition: transform 0.2s;
+        transition: all 0.2s ease;
     }
     .result-card:hover {
-        border-color: #58a6ff;
+        border-color: #3b82f6;
         transform: translateY(-2px);
+        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15);
     }
     .result-score {
         font-size: 0.8rem;
-        color: #8b949e;
+        font-weight: 600;
+        color: #3b82f6;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
         margin-bottom: 0.5rem;
     }
     .result-text {
-        font-size: 1rem;
-        line-height: 1.5;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: #c9d1d9;
     }
     
-    /* Fix Chat Message Text Color */
-    div[data-testid="stChatMessage"] p {
-        color: #ffffff !important;
+    /* Fix Chat Message Typography */
+    div[data-testid="stChatMessage"] {
+        background-color: #121620;
+        border: 1px solid #1f2430;
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
     }
-    div[data-testid="stChatMessage"] .stMarkdown {
-        color: #ffffff !important;
+    div[data-testid="stChatMessage"] p {
+        color: #f0f6fc !important;
+        font-family: 'Outfit', sans-serif;
+        line-height: 1.6;
     }
     .stMarkdown p {
-        color: #ffffff !important;
+        color: #f0f6fc !important;
+    }
+    
+    /* Custom Info banner styling */
+    .stInfo {
+        background-color: #1a1b26;
+        border-left: 4px solid #4f46e5;
+        color: #a9b1d6;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# State initialization
+if "gemini_key_index" not in st.session_state:
+    st.session_state.gemini_key_index = 0
+
 @st.cache_resource
 def get_resources():
-    client = EndeeClient(api_key="secret")
+    db_url = os.getenv("ENDEE_DB_URL", "http://localhost:8080")
+    client = EndeeClient(base_url=db_url, api_key="secret")
     model = SentenceTransformer('all-MiniLM-L6-v2')
     return client, model
 
@@ -109,38 +151,45 @@ def save_doc_mapping(mapping):
     with open(DOC_MAPPING_FILE, "w") as f:
         json.dump(mapping, f)
 
-# Configuration
-API_KEYS = {
-    "OpenAI": os.getenv("OPENAI_API_KEY", ""),
-    "Google Gemini": os.getenv("GEMINI_API_KEY", ""),
-    "Groq": os.getenv("GROQ_API_KEY", "")
-}
+# Helper function to parse comma-separated keys
+def parse_keys(input_str):
+    if not input_str:
+        return []
+    return [k.strip() for k in input_str.replace(";", ",").split(",") if k.strip()]
+
+# Loaded keys from environment
+env_keys_str = os.getenv("GEMINI_API_KEY", "")
+env_keys = parse_keys(env_keys_str)
 
 # Sidebar Configuration
 with st.sidebar:
-    st.title("🤖 Configuration")
+    st.title("🤖 Config Panel")
     st.markdown("---")
     
-    # Status
+    # Status Indicators
+    db_ok = False
     try:
         if client.health():
-            st.success("Endee DB: Connected")
+            st.success("🟢 Endee DB: Connected")
+            db_ok = True
     except:
-        st.error("Endee DB: Disconnected")
+        st.error("🔴 Endee DB: Disconnected")
     
-    st.markdown("### LLM Settings")
-    llm_provider = st.selectbox("Provider", ["None (Search Only)", "OpenAI", "Google Gemini", "Groq"])
+    st.markdown("### Gemini Status")
     
-    api_key = API_KEYS.get(llm_provider, "")
+    # Resolve loaded keys exclusively from the secure .env file
+    active_keys = env_keys
+    st.session_state.gemini_keys_pool = active_keys
     
-    if llm_provider != "None (Search Only)" and not api_key:
-        api_key = st.text_input("API Key", type="password", placeholder=f"Enter {llm_provider} Key")
-    elif llm_provider != "None (Search Only)":
-        st.success(f"Using configured key for {llm_provider}")
-    
+    if active_keys:
+        st.success("🟢 Google Gemini: Active")
+        st.info(f"✨ Gemini Model Loaded ({len(active_keys)} key(s) in rotation)")
+    else:
+        st.warning("⚠️ No Gemini keys configured in .env. Retrieval only active.")
+        
     st.markdown("---")
     st.markdown("### 📤 Upload Documents")
-    uploaded_files = st.file_uploader("Upload .txt files", type=["txt"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Upload files (.txt, .pdf, .docx)", type=["txt", "pdf", "docx"], accept_multiple_files=True)
     
     if uploaded_files:
         if st.button("Ingest Uploaded Files"):
@@ -153,24 +202,24 @@ with st.sidebar:
                 count = 0
                 for uploaded_file in uploaded_files:
                     try:
-                        # Read file
-                        text_content = uploaded_file.read().decode("utf-8")
+                        file_bytes = uploaded_file.read()
                         
-                        # Chunking Strategy: Split by double newlines (paragraphs)
-                        chunks = [c.strip() for c in text_content.split('\n\n') if c.strip()]
+                        # Use unified text extractor
+                        text_content = extract_text(file_bytes, uploaded_file.name)
+                        if not text_content.strip():
+                            st.warning(f"No text content could be extracted from {uploaded_file.name}")
+                            continue
+                        
+                        # Use smart overlapping chunking
+                        chunks = chunk_text(text_content, chunk_size=800, overlap=150)
                         
                         for chunk in chunks:
-                            # Embed
                             vector = model.encode(chunk).tolist()
-                            
-                            # Create Item
                             doc_id = str(next_id)
                             batch.append({
                                 "id": doc_id,
                                 "vector": vector
                             })
-                            
-                            # Update mapping with CHUNK content
                             doc_mapping[doc_id] = chunk
                             
                             next_id += 1
@@ -180,17 +229,15 @@ with st.sidebar:
                 
                 if batch:
                     try:
-                        # Ensure index exists (idempotent usually, or catch error)
                         try:
                             client.create_index("demo_docs", dim=384)
                         except:
-                            pass # Assume exists
+                            pass # Assume index already exists
                             
-                        # Insert
                         success = client.insert_vectors("demo_docs", batch)
                         if success:
                             save_doc_mapping(doc_mapping)
-                            st.success(f"Successfully ingested {count} chunks from uploaded files!")
+                            st.success(f"Successfully ingested {count} chunks!")
                         else:
                             st.error("Failed to insert vectors into Endee.")
                     except Exception as e:
@@ -198,13 +245,13 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### Index Info")
-    st.info(f"Documents Indexed: {len(doc_mapping)}")
+    st.info(f"Passages Indexed: {len(doc_mapping)}")
 
 # Main Interface
 st.title("Endee RAG Demo")
-st.markdown("Ask questions about your documents using **Endee Vector Database**.")
+st.markdown("Interact with your documents using **Endee Vector Database** and **Google Gemini**.")
 
-# Chat History
+# Chat History Setup
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -212,14 +259,89 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Function to generate RAG response
-def generate_rag_response(query, context, provider, key):
+# Rotate and retrieve keys helper
+def get_next_gemini_key():
+    keys = st.session_state.get("gemini_keys_pool", [])
+    if not keys:
+        return None
+    idx = st.session_state.gemini_key_index % len(keys)
+    st.session_state.gemini_key_index += 1
+    return keys[idx]
+
+# API call failover runner
+def call_gemini_with_failover(func, *args, **kwargs):
+    keys = st.session_state.get("gemini_keys_pool", [])
+    if not keys:
+        raise ValueError("No Gemini keys configured.")
+        
+    attempts = len(keys)
+    last_exception = None
+    
+    for _ in range(attempts):
+        key = get_next_gemini_key()
+        try:
+            genai.configure(api_key=key)
+            return func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            # Console log for background debug
+            print(f"Failover key trigger. Key failed. Attempting next. Error: {e}")
+            
+    raise last_exception if last_exception else RuntimeError("All configured Gemini API keys failed.")
+
+# Smart Query Rewriter (Gemini Only)
+def condense_query(chat_history, latest_query):
+    keys = st.session_state.get("gemini_keys_pool", [])
+    if not keys or not chat_history:
+        return latest_query
+        
+    formatted_history = ""
+    for msg in chat_history[-5:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        formatted_history += f"{role}: {msg['content']}\n"
+        
+    prompt = f"""
+    Given the following conversation history and a follow-up question, rephrase the follow-up question to be a standalone question that can be searched in a vector database.
+    DO NOT answer the question. Just return the rephrased standalone question and nothing else.
+    
+    Conversation History:
+    {formatted_history}
+    
+    Follow-up Question: {latest_query}
+    Standalone Question:
+    """
+    
+    def _api_call():
+        gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        response = gemini_model.generate_content(prompt)
+        return response.text.strip()
+        
+    try:
+        return call_gemini_with_failover(_api_call)
+    except Exception as e:
+        print(f"Query condensation failed: {e}")
+        return latest_query
+
+# RAG Synthesizer (Gemini Only)
+def generate_rag_response(query, context, chat_history):
+    keys = st.session_state.get("gemini_keys_pool", [])
+    if not keys:
+        return "Please configure one or more Gemini API Keys in the sidebar to generate responses."
+        
+    formatted_history = ""
+    for msg in chat_history[-5:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        formatted_history += f"{role}: {msg['content']}\n"
+
     prompt_template = f"""
-    You are a helpful assistant. Use the following context to answer the user's question.
-    If the answer is not in the context, say you don't know.
+    You are a helpful assistant. Use the following context and conversation history to answer the user's question.
+    If the answer is not in the context, say you don't know. Keep your answer concise and accurate.
     
     Context:
     {context}
+    
+    Conversation History:
+    {formatted_history}
     
     Question: 
     {query}
@@ -227,59 +349,41 @@ def generate_rag_response(query, context, provider, key):
     Answer:
     """
     
+    def _api_call():
+        gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        response = gemini_model.generate_content(prompt_template)
+        return response.text
+        
     try:
-        if provider == "OpenAI" and key:
-            openai.api_key = key
-            client = openai.OpenAI(api_key=key)
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt_template}]
-            )
-            return response.choices[0].message.content
-            
-        elif provider == "Google Gemini" and key:
-            genai.configure(api_key=key)
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt_template)
-            return response.text
-            
-        elif provider == "Groq" and key:
-            client = Groq(api_key=key)
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt_template}]
-            )
-            return response.choices[0].message.content
-            
-        else:
-            return "Please provide a valid API Key to generate an answer."
-            
+        return call_gemini_with_failover(_api_call)
     except Exception as e:
-        return f"Error generating response: {str(e)}"
+        return f"Error generating answer after trying all available Gemini keys: {str(e)}"
 
-
-# Chat Input
+# Chat Input Handler
 if prompt := st.chat_input("What would you like to know?"):
-    # Add user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Process Query
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
         
-        with st.spinner("Searching Endee..."):
-            # 1. Embed Query
-            vector = model.encode(prompt).tolist()
+        # 1. Standalone Query Condensation
+        history_to_pass = st.session_state.messages[:-1]
+        search_query = condense_query(history_to_pass, prompt)
+        
+        if search_query != prompt:
+            st.info(f"🔍 Context Rewriting Active. Searching database for standalone query: *\"{search_query}\"*")
+        
+        with st.spinner("Searching database..."):
+            vector = model.encode(search_query).tolist()
             
-            # 2. Search Endee
             try:
-                # Search
+                # 2. Search Endee Database
                 results = client.search("demo_docs", vector, k=5)
                 
-                # Parse Results
+                # Parse search results
                 matches = []
                 if isinstance(results, list):
                     matches = results
@@ -290,41 +394,40 @@ if prompt := st.chat_input("What would you like to know?"):
                 
                 for match in matches:
                      if isinstance(match, list):
-                         doc_id = match[1] # ID is index 1
-                         distance = match[0]
+                         doc_id = match[1]
                      elif isinstance(match, dict):
                          doc_id = match.get('id') or match.get(b'id')
-                         distance = match.get('distance')
                      else:
                          continue
                          
-                     if isinstance(doc_id, bytes): doc_id = doc_id.decode()
+                     if isinstance(doc_id, bytes): 
+                         doc_id = doc_id.decode()
                      
                      text = doc_mapping.get(str(doc_id), "")
                      if text and text not in retrieved_docs:
                          retrieved_docs.append(text)
                 
-                # 3. Generate Answer (RAG)
+                # 3. Formulate Context
                 context = "\n\n".join(retrieved_docs)
                 
-                if llm_provider != "None (Search Only)" and api_key:
+                if st.session_state.get("gemini_keys_pool"):
                     message_placeholder.markdown("Generating answer...")
                     prompt_plus = f"The user asked: {prompt}. If they made a typo like 'background' for 'backend', please use your judgment to answer correctly based on the context."
-                    full_response = generate_rag_response(prompt_plus, context, llm_provider, api_key)
+                    full_response = generate_rag_response(prompt_plus, context, history_to_pass)
                 else:
-                    full_response = "**Retrieved Context:**\n\n" + context + "\n\n*(Connect an LLM in settings to generate an authenticated answer)*"
+                    full_response = "**Retrieved Context:**\n\n" + context + "\n\n*(Please add a Gemini API Key in the sidebar to generate response answers)*"
                 
                 message_placeholder.markdown(full_response)
                 
-                # Show Sources
+                # Show Sources Dropdown
                 with st.expander("View Retrieved Sources"):
                     for i, doc in enumerate(retrieved_docs):
-                        st.markdown(f"""
-                        <div class="result-card">
-                            <div class="result-score">Source {i+1}</div>
-                            <div class="result-text">{doc}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                         st.markdown(f"""
+                         <div class="result-card">
+                             <div class="result-score">Source {i+1}</div>
+                             <div class="result-text">{doc}</div>
+                         </div>
+                         """, unsafe_allow_html=True)
                         
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 

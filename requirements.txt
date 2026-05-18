@@ -2,7 +2,7 @@ requests
 streamlit
 sentence-transformers
 msgpack
-openai
 google-generativeai
-groq
 python-dotenv
+pypdf
+docx2txt

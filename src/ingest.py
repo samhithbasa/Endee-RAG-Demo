@@ -1,12 +1,15 @@
 import os
 import glob
+import json
 from sentence_transformers import SentenceTransformer
 from client import EndeeClient
 import time
+from utils import extract_text, chunk_text
 
 def ingest_data():
     # Initialize client
-    client = EndeeClient(api_key="secret")
+    db_url = os.getenv("ENDEE_DB_URL", "http://localhost:8080")
+    client = EndeeClient(base_url=db_url, api_key="secret")
     
     # Wait for server
     max_retries = 5
@@ -49,17 +52,28 @@ def ingest_data():
         with open(os.path.join(data_dir, fname), "w") as f:
             f.write(content)
 
-    file_paths = glob.glob(os.path.join(data_dir, "*.txt"))
+    # Scan for TXT, PDF, and DOCX files
+    file_paths = []
+    for ext in ["*.txt", "*.pdf", "*.docx"]:
+        file_paths.extend(glob.glob(os.path.join(data_dir, ext)))
     
     batch = []
+    doc_mapping = {}
     id_counter = 1
     
     for path in file_paths:
-        with open(path, "r") as f:
-            text = f.read()
+        file_name = os.path.basename(path)
+        print(f"Processing {file_name}...")
+        
+        # Extract text from PDF, DOCX, or TXT
+        text = extract_text(path)
+        if not text.strip():
+            print(f"Warning: No text extracted from {file_name}")
+            continue
             
-        # Simple chunking by sentence or just whole file for short texts
-        chunks = [text] # simplified
+        # Segment text into overlapping chunks
+        chunks = chunk_text(text, chunk_size=800, overlap=150)
+        print(f"Created {len(chunks)} chunks from {file_name}")
         
         for chunk in chunks:
             embedding = model.encode(chunk).tolist()
@@ -67,32 +81,18 @@ def ingest_data():
             item = {
                 "id": str(id_counter),
                 "vector": embedding,
-                # "text": chunk # Endee might not store payload in vector/insert? 
-                # According to code, it only stores vector, sparse, id. 
-                # We need a separate mapping or rely on ID to retrieve text.
-                # For this demo, let's assume we fetch text from file params or just map ID back to text in memory for simplicity.
             }
-            # We'll store text in a separate map for the demo app to retrieve
-            # For a real app, use a DB or Endee might support metadata in future? 
-            # Checked source: HybridVectorObject has id, vector, sparse... no metadata field seen in `parse_obj`.
-            
             batch.append(item)
+            
+            # Map chunk ID back to chunk content
+            doc_mapping[str(id_counter)] = chunk
             id_counter += 1
             
     # Save document mapping for retrieval because Endee doesn't store metadata/text payload yet
-    import json
-    doc_mapping = {}
-    current_id = 1
-    for path in file_paths:
-        with open(path, "r") as f:
-            doc_mapping[str(current_id)] = f.read()
-            current_id += 1
-            
     with open("doc_mapping.json", "w") as f:
         json.dump(doc_mapping, f)
             
     if batch:
-
         print(f"Inserting {len(batch)} vectors...")
         client.insert_vectors(index_name, batch)
         print("Insertion complete")

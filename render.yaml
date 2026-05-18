@@ -1,0 +1,24 @@
+services:
+  # 1. Endee Database (Private Service - Securely accessible only inside Render)
+  - type: pservice
+    name: endee-db
+    env: docker
+    dockerImage: endeeio/endee-server:latest
+    plan: free
+    envVars:
+      - key: NDD_DATA_DIR
+        value: /app/data
+      - key: NDD_AUTH_TOKEN
+        value: secret
+
+  # 2. Streamlit RAG Frontend (Web Service - Publicly accessible)
+  - type: web
+    name: endee-rag-ui
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    envVars:
+      - key: ENDEE_DB_URL
+        value: http://endee-db:8080
+      - key: GEMINI_API_KEY
+        sync: false # Paste your 5 Gemini API keys here in the Render UI dashboard
