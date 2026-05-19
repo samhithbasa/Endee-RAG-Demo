@@ -1,6 +1,5 @@
 requests
 streamlit
-sentence-transformers
 msgpack
 google-generativeai
 python-dotenv

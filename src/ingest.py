@@ -1,12 +1,35 @@
 import os
 import glob
 import json
-from sentence_transformers import SentenceTransformer
+import google.generativeai as genai
+from dotenv import load_dotenv
 from client import EndeeClient
 import time
 from utils import extract_text, chunk_text
 
 def ingest_data():
+    load_dotenv()
+    
+    # Configure Gemini API keys
+    keys_str = os.getenv("GEMINI_API_KEY", "")
+    keys = [k.strip() for k in keys_str.replace(";", ",").split(",") if k.strip()]
+    
+    def get_embedding(text):
+        if not keys:
+            raise ValueError("No GEMINI_API_KEY configured in environment.")
+        last_exception = None
+        for key in keys:
+            try:
+                genai.configure(api_key=key)
+                result = genai.embed_content(
+                    model="models/gemini-embedding-001",
+                    content=text
+                )
+                return result['embedding']
+            except Exception as e:
+                last_exception = e
+        raise last_exception if last_exception else RuntimeError("Embedding generation failed.")
+
     # Initialize client
     db_url = os.getenv("ENDEE_DB_URL", "http://localhost:8080")
     client = EndeeClient(base_url=db_url, api_key="secret")
@@ -26,16 +49,13 @@ def ingest_data():
         return
 
     # Create Index
-    index_name = "demo_docs"
-    # Dimensions for all-MiniLM-L6-v2 is 384
+    index_name = "demo_docs_v2"
+    # Dimensions for gemini-embedding-001 is 768
     try:
-        client.create_index(index_name, dim=384, space_type="l2")
+        client.create_index(index_name, dim=768, space_type="l2")
         print(f"Index {index_name} created")
     except Exception as e:
         print(f"Index creation failed (maybe exists): {e}")
-
-    # Load Model
-    model = SentenceTransformer('all-MiniLM-L6-v2')
 
     # Load Data
     # For demo, we'll create some dummy data files if they don't exist
@@ -76,7 +96,7 @@ def ingest_data():
         print(f"Created {len(chunks)} chunks from {file_name}")
         
         for chunk in chunks:
-            embedding = model.encode(chunk).tolist()
+            embedding = get_embedding(chunk)
             
             item = {
                 "id": str(id_counter),

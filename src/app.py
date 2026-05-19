@@ -1,6 +1,5 @@
 import streamlit as st
 from client import EndeeClient
-from sentence_transformers import SentenceTransformer
 import json
 import os
 from dotenv import load_dotenv
@@ -134,10 +133,9 @@ if "gemini_key_index" not in st.session_state:
 def get_resources():
     db_url = os.getenv("ENDEE_DB_URL", "http://localhost:8080")
     client = EndeeClient(base_url=db_url, api_key="secret")
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    return client, model
+    return client
 
-client, model = get_resources()
+client = get_resources()
 
 # Load doc mapping
 DOC_MAPPING_FILE = "doc_mapping.json"
@@ -214,7 +212,7 @@ with st.sidebar:
                         chunks = chunk_text(text_content, chunk_size=800, overlap=150)
                         
                         for chunk in chunks:
-                            vector = model.encode(chunk).tolist()
+                            vector = get_embedding(chunk)
                             doc_id = str(next_id)
                             batch.append({
                                 "id": doc_id,
@@ -230,11 +228,11 @@ with st.sidebar:
                 if batch:
                     try:
                         try:
-                            client.create_index("demo_docs", dim=384)
+                            client.create_index("demo_docs_v2", dim=768)
                         except:
                             pass # Assume index already exists
                             
-                        success = client.insert_vectors("demo_docs", batch)
+                        success = client.insert_vectors("demo_docs_v2", batch)
                         if success:
                             save_doc_mapping(doc_mapping)
                             st.success(f"Successfully ingested {count} chunks!")
@@ -359,6 +357,16 @@ def generate_rag_response(query, context, chat_history):
     except Exception as e:
         return f"Error generating answer after trying all available Gemini keys: {str(e)}"
 
+# Helper to generate Gemini embedding with failover
+def get_embedding(text):
+    def _api_call():
+        result = genai.embed_content(
+            model="models/gemini-embedding-001",
+            content=text
+        )
+        return result['embedding']
+    return call_gemini_with_failover(_api_call)
+
 # Chat Input Handler
 if prompt := st.chat_input("What would you like to know?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -377,11 +385,11 @@ if prompt := st.chat_input("What would you like to know?"):
             st.info(f"🔍 Context Rewriting Active. Searching database for standalone query: *\"{search_query}\"*")
         
         with st.spinner("Searching database..."):
-            vector = model.encode(search_query).tolist()
+            vector = get_embedding(search_query)
             
             try:
                 # 2. Search Endee Database
-                results = client.search("demo_docs", vector, k=5)
+                results = client.search("demo_docs_v2", vector, k=5)
                 
                 # Parse search results
                 matches = []
