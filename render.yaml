@@ -14,8 +14,8 @@ services:
   # 2. Streamlit RAG Frontend (Web Service - Publicly accessible)
   - type: web
     name: endee-rag-ui
-    env: docker
-    dockerfilePath: Dockerfile
+    runtime: docker
+    dockerfilePath: ./Dockerfile
     plan: free
     envVars:
       - key: ENDEE_DB_URL
