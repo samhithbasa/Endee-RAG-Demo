@@ -3,7 +3,8 @@ services:
   - type: pserv
     name: endee-db
     runtime: image
-    image: docker.io/endeeio/endee-server:latest
+    image:
+      url: docker.io/endeeio/endee-server:latest
     plan: free
     envVars:
       - key: NDD_DATA_DIR
